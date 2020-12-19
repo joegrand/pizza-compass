@@ -31,11 +31,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define _GPRMCterm   "GPRMC"
 #define _GPGGAterm   "GPGGA"
 
+// Fix macros per https://github.com/codegardenllc/tiny_gps_plus/pull/1
 // Converts degrees to radians.
-#define radians(angleDegrees) (angleDegrees * M_PI / 180.0)
+#define radians(angleDegrees) ((angleDegrees) * M_PI / 180.0)
  
 // Converts radians to degrees.
-#define degrees(angleRadians) (angleRadians * 180.0 / M_PI)
+#define degrees(angleRadians) ((angleRadians) * 180.0 / M_PI)
 
 #define TWO_PI 6.283185307179586476925286766559
 #define sq(x) ((x)*(x))
@@ -321,13 +322,27 @@ double TinyGPSPlus::courseTo(double lat1, double long1, double lat2, double long
   // both specified as signed decimal-degrees latitude and longitude.
   // Because Earth is no exact sphere, calculated course may be off by a tiny fraction.
   // Courtesy of Maarten Lamers
+  double a1, a2;
   double dlon = radians(long2-long1);
+  double dlat = radians(lat2-lat1);
   lat1 = radians(lat1);
   lat2 = radians(lat2);
-  double a1 = sin(dlon) * cos(lat2);
-  double a2 = sin(lat1) * cos(lat2) * cos(dlon);
-  a2 = cos(lat1) * sin(lat2) - a2;
-  a2 = atan2(a1, a2);
+
+  // If position 1 and 2 are close together, use equirect approximation with precise integers
+  // Per NeoGPS_v4_2_9 Location.cpp BearingTo function
+  if ((abs(dlon) + abs(dlat)) < 1000)
+  {
+    a1 = dlon * cos(lat1);
+    a2 = dlat;
+    a2 = M_PI/2.0 - atan2(a2, a1);
+  }
+  else
+  {
+    a1 = sin(dlon) * cos(lat2);
+    a2 = sin(lat1) * cos(lat2) * cos(dlon);
+    a2 = cos(lat1) * sin(lat2) - a2;
+    a2 = atan2(a1, a2);
+  }
   if (a2 < 0.0)
   {
     a2 += TWO_PI;
