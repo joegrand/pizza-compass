@@ -8,8 +8,8 @@
 
 /* LED states:
  * White: LED test at power-up
- * Spinning red: Connecting to Particle network (press button to skip)
- * Spinning green: Waiting for valid GPS fix (press button to skip)
+ * Spinning red: Connecting to Particle network
+ * Spinning green: Waiting for valid GPS fix
  * Spinning blue: Waiting for compass calibration (short press to skip, press and hold to calibrate)
  * Solid blue: Compass calibration (spin around each axis like you're painting the inside of a sphere, press button when done)
  * Flashing blue: Compass error (can't communicate)
@@ -34,7 +34,6 @@ SYSTEM_THREAD(ENABLED);                   // Enable multithreading (application 
 
 #define PARTICLE_PUBLISH_TIME   10000     // Minimum time (in ms) allowed between Particle.publish events
 #define PARTICLE_CONSOLE_BAUD   115200
-#define PARTICLE_RCV_DELAY      5000      // Time (in ms) to wait for a response from Particle before proceeding
 
 /*
  * Only these pins can be used for Neopixel by the Particle Boron:
@@ -53,11 +52,9 @@ SYSTEM_THREAD(ENABLED);                   // Enable multithreading (application 
 
 // Hard-coded GPS coordinates
 // https://www.gps-coordinates.net/
-// Can be used if GPS has no valid fix...
 #define GPS_LOCAL_LAT       40.6892532      // Statue of Liberty
 #define GPS_LOCAL_LNG       -74.0445482
 
-// Can be used as a fixed target if no cellular connectivity
 #define GPS_TARGET_LAT      37.8184509      // Golden Gate Bridge
 #define GPS_TARGET_LNG      -122.4784088
 
@@ -65,7 +62,7 @@ SYSTEM_THREAD(ENABLED);                   // Enable multithreading (application 
 #define GPS_LOCATION_AGE    5000    // Time (in ms) before data is considered stale (e.g., we may have lost fix)
 
 #define UI_INTERVAL_TIME    100     // Time (in ms) to wait between GPS/compass updates
-#define UI_DISTANCE_ALERT   20.0    // Distance (in meters) to target in order to enable visual alert
+#define UI_DISTANCE_ALERT   50.0    // Distance to target (in meters) in order to enable visual alert
 #define UI_BLINK_TIME       250     // Blink time (in ms) for visual alert when we're within range of target
 
 
@@ -80,6 +77,7 @@ const int gpsEnable = D8;       // GPS Enable pin (active HIGH)
 bool first_time = true;         // If we haven't searched for pizza yet
 bool blinkFlag = false;         // Blink LEDs if we are within range of target
 unsigned long lastUpdateTime = 0;
+unsigned long lastPublishTime = 0;
 unsigned long lastBlinkTime = 0;
 
 // Neopixel LEDs
@@ -96,7 +94,7 @@ double courseToPizza;   // Heading (in degrees) from our current location to the
 double distanceToPizza; // Distance (in meters) from our current location to the target
 int direction_index;
 
-// Particle Webhooks
+// Particle
 bool requestSent = false;
 bool requestRcv = false;
 void hookResponseHandler(const char *event, const char *data);
@@ -112,12 +110,12 @@ void setup()
   pinMode(gpsEnable, OUTPUT);
   pinMode(buttonStart, INPUT);
 
-  digitalWrite(gpsEnable, 1); // Make sure the GPS is turned on 
+  digitalWrite(gpsEnable, 1);  // Make sure the GPS module is active
 
   Serial.begin(PARTICLE_CONSOLE_BAUD);
-  delay(5000);    // Give time for serial monitor to open
+  delay(5000);  // Give time for serial monitor to open
 
-  Serial.println("\n\nWelcome to the Pizza Compass!\n");
+  Serial.println("\n\nWelcome to Joe Grand's Pizza Compass!\n");
 
   Serial.print("[*] Initializing Neopixels...");
   strip.begin();
@@ -126,39 +124,21 @@ void setup()
   strip.setBrightness(PIXEL_BRIGHTNESS);
   Serial.println("Done!");
 
-  // Wait for Particle to connect to the network (press button to skip)
+  // Wait for Particle to connect to the network
   LED_SetAll(strip.Color(255, 255, 255), 0); // All LEDs on immediately after power-up
   delay(5000);
   LED_SetAll(strip.Color(0, 0, 0), 0); // Off
 
   Serial.print("[*] Connecting to Particle network...");
-  int skip = false;
   while (Particle.connected() == false)
   {
     LED_ColorWipe(strip.Color(255, 0, 0), PIXEL_WIPE_SPEED); // Red
     LED_ColorWipe(strip.Color(0, 0, 0), PIXEL_WIPE_SPEED); // Off
-
-    if (digitalRead(buttonStart) == 0)    // If button is pressed, skip
-    {
-      delay(100);
-      while (digitalRead(buttonStart) == 0);
-      delay(100);
-      skip = true;
-      break; 
-    }
   }
-  if (skip == true)
-  {
-    Serial.println("Skipped!");
-  }
-  else
-  {
-    Serial.println("Done!");
-  }
+  Serial.println("Done!");
 
   // Wait for valid GPS fix
   Serial.print("[*] Waiting for GPS...");
-  skip = false;
   Serial1.begin(GPS_BAUD);
   while (!Serial1);   // Wait until the serial port is ready
   gps.encode(Serial1.read()); 
@@ -171,25 +151,9 @@ void setup()
     {
       gps.encode(Serial1.read()); 
     }
-    //GPS_DisplayInfo();
-
-    if (digitalRead(buttonStart) == 0)    // If button is pressed, skip
-    {
-      delay(100);
-      while (digitalRead(buttonStart) == 0);
-      delay(100);
-      skip = true;
-      break; 
-    }
   }
-  if (skip == true)
-  {
-    Serial.println("Skipped!");
-  }
-  else
-  {
-    Serial.println("Done!");
-  }
+  //GPS_DisplayInfo();
+  Serial.println("Done!");
 
   Serial.print("[*] Initializing magnetometer...");
   Wire.begin();
@@ -252,7 +216,7 @@ void setup()
   delay(100);
 
   // We're all set up and good to go!
-  Serial.println("[*] Waiting for button...");
+  Serial.print("[*] Waiting for button...");
 }
 
 /* ---------------------------------------------------------------- */
@@ -266,10 +230,12 @@ void loop()
 
       if (digitalRead(buttonStart) == 0)  // If the button is pressed
       {
+        Serial.println("Done!");
         first_time = false;
       }
   }
  
+  // At this point, we assume the GPS retains a valid fix (no error checking for invalid/stale data)
   while (Serial1.available() > 0)  // If characters have been received from the GPS...
   {
     gps.encode(Serial1.read());      // ...Push them into the GPS object
@@ -280,26 +246,20 @@ void loop()
     delay(100); // Debounce
     if (digitalRead(buttonStart) == 0) // If the button is still pressed...
     {
-      if (!requestSent && millis() > PARTICLE_PUBLISH_TIME)  // If we haven't sent a request recently
+      if (requestSent == false && (millis() - lastPublishTime >= PARTICLE_PUBLISH_TIME))  // If we haven't sent a request recently
       {
+        lastPublishTime = millis();
         LED_ColorWipe(strip.Color(255, 0, 255), PIXEL_WIPE_SPEED); // Purple
 
-        Serial.printlnf("[*] Sending request!");
-        GPS_DisplayInfo();
+        while(digitalRead(buttonStart) == 0);  // Wait until button is released
+        delay(100);
 
-        if (gps.location.isValid() && gps.location.age() < GPS_LOCATION_AGE)
-        {
-          // Get current local GPS coordinates
-          local_lat = gps.location.lat();
-          local_lng = gps.location.lng();
-        }
-        else
-        {
-          // If we don't have valid GPS data, use hard-coded coordinates
-          local_lat = GPS_LOCAL_LAT;
-          local_lng = GPS_LOCAL_LNG;
-        }
+        Serial.printlnf("[*] Sending request to Particle...");
 
+        // Get current local GPS coordinates
+        local_lat = gps.location.lat();
+        local_lng = gps.location.lng();
+        
         // Prepare data for query
         // https://github.com/rickkas7/particle-webhooks
         /* Set up Webhook custom template in Particle.io dashboard
@@ -326,73 +286,29 @@ void loop()
         Serial.printlnf("-> Data: %s", data);
         Particle.publish("get_pizza", data, PRIVATE);
 
-        delay(100);
-        while (digitalRead(buttonStart) == 0) // Wait until button is released
-        delay(100); 
         LED_ColorWipe(strip.Color(0, 0, 0), PIXEL_WIPE_SPEED); // Off
       }
     }
   }
   else  // Display heading for us to follow
   {
-    if (Particle.connected() == true && requestSent)  // If data has just been sent to Particle
+    if (Particle.connected() == true && requestSent == true && requestRcv == false)  // If data has just been sent to Particle
     {
-      unsigned long start_time = millis();
-      while (millis() - start_time < PARTICLE_RCV_DELAY)  // Wait fixed time for a response
-      {
-        LED_ColorWipe(strip.Color(255, 0, 255), PIXEL_WIPE_SPEED); // Purple
-        LED_ColorWipe(strip.Color(0, 0, 0), PIXEL_WIPE_SPEED); // Off
-      }
-
-      requestSent = false;  // Clear flag so we can perform another request in the future
+      LED_ColorWipe(strip.Color(255, 0, 255), PIXEL_WIPE_SPEED); // Purple
+      LED_ColorWipe(strip.Color(0, 0, 0), PIXEL_WIPE_SPEED); // Off
     }
 
-    if (millis() - lastUpdateTime >= UI_INTERVAL_TIME)
+    if (requestRcv == true && (millis() - lastUpdateTime >= UI_INTERVAL_TIME))  // If we've received target coordinates back from Particle/Google API
     {
       lastUpdateTime = millis();
+      
+      requestSent = false;  // Clear flag so we can perform another request in the future
+      Serial.printlnf("[*] Let's go!");
 
-      Serial.printlnf("[*] Target acquired!");
-
-      //GPS_DisplayInfo();
-
-      if (requestRcv)   // If we've received target coordinates back from Particle/Google API
-      {
-        if (gps.location.isValid() && gps.location.age() < GPS_LOCATION_AGE)
-        {
-          // Get current local GPS coordinates
-          local_lat = gps.location.lat();
-          local_lng = gps.location.lng();
-          // target_lat and target_lng already exist via hookResponseHandler
-        }
-        else
-        {
-          // If we don't have valid GPS data, use hard-coded coordinates
-          local_lat = GPS_LOCAL_LAT;
-          local_lng = GPS_LOCAL_LNG;
-          // target_lat and target_lng already exist via hookResponseHandler
-        }
-      }
-      else   // If we've NOT received target coordinates back from Particle/Google API
-      {
-        if (gps.location.isValid() && gps.location.age() < GPS_LOCATION_AGE)
-        {
-          // Get current local GPS coordinates
-          local_lat = gps.location.lat();
-          local_lng = gps.location.lng();
-          // If we don't have valid data from Particle, use hard-coded coordinates
-          target_lat = GPS_TARGET_LAT;
-          target_lng = GPS_TARGET_LNG;
-        }
-        else
-        {
-          // If we don't have valid GPS data, use hard-coded coordinates
-          local_lat = GPS_LOCAL_LAT;
-          local_lng = GPS_LOCAL_LNG;
-          // If we don't have valid data from Particle, use hard-coded coordinates
-          target_lat = GPS_TARGET_LAT;
-          target_lng = GPS_TARGET_LNG;
-        }
-      }
+      // Get current local GPS coordinates
+      local_lat = gps.location.lat();
+      local_lng = gps.location.lng();
+      // target_lat and target_lng already exist via hookResponseHandler
 
       // Force hard-coded coordinates here for testing
       //local_lat = GPS_LOCAL_LAT;
@@ -426,12 +342,12 @@ void loop()
         When given no arguments, the heading() function returns the angular
         difference in the horizontal plane between a default vector and
         north, in degrees.
-          
+            
         To use a different vector as a reference, use the version of heading()
         that takes a vector argument; for example, use
-          
+            
           compass.heading((LSM303::vector<int>){0, 0, 1});
-          
+            
         to use the +Z axis as a reference.
       */
       compass.read();  // Read new compass values
@@ -448,48 +364,48 @@ void loop()
       snprintf(report, sizeof(report), "-> A: %6d %6d %6d\n-> M: %6d %6d %6d", compass.a.x, compass.a.y, compass.a.z, compass.m.x, compass.m.y, compass.m.z);
       Serial.println(report);*/
       Serial.printlnf("-> LED: %d", direction_index);
-    }
 
-    unsigned long currentBlinkTime = millis();
-    if (distanceToPizza <= UI_DISTANCE_ALERT)   // If we are within range of our target...
-    {
-      if (currentBlinkTime - lastBlinkTime >= UI_BLINK_TIME)
+      unsigned long currentBlinkTime = millis();
+      if (distanceToPizza <= UI_DISTANCE_ALERT)   // If we are within range of our target...
       {
-        lastBlinkTime = currentBlinkTime;
-        if (blinkFlag == false)
+        if (currentBlinkTime - lastBlinkTime >= UI_BLINK_TIME)
         {
-          blinkFlag = true;
-        }
-        else
-        {
-          blinkFlag = false;
-        }
-      }
-    }
-    else
-    {
-      blinkFlag = false;
-    }
-      
-    // Light the pixel for the direction we need to go
-    for (int i = 0; i < strip.numPixels(); i++) 
-    {
-      if (i == direction_index && blinkFlag == false)
-      {
-        if (direction_index == 0) // If we're facing in the direction of our target
-        {
-          strip.setPixelColor(i, strip.Color(0, 255, 0)); // Green
-        }
-        else
-        {
-          strip.setPixelColor(i, strip.Color(255, 0, 0)); // Red
+          lastBlinkTime = currentBlinkTime;
+          if (blinkFlag == false)
+          {
+            blinkFlag = true;
+          }
+          else
+          {
+            blinkFlag = false;
+          }
         }
       }
       else
-        strip.setPixelColor(i, strip.Color(0, 0, 0));   // Turn off all others
-    }
+      {
+        blinkFlag = false;
+      }
+        
+      // Light the pixel for the direction we need to go
+      for (int i = 0; i < strip.numPixels(); i++) 
+      {
+        if (i == direction_index && blinkFlag == false)
+        {
+          if (direction_index == 0) // If we're facing in the direction of our target
+          {
+            strip.setPixelColor(i, strip.Color(0, 255, 0)); // Green
+          }
+          else
+          {
+            strip.setPixelColor(i, strip.Color(255, 0, 0)); // Red
+          }
+        }
+        else
+          strip.setPixelColor(i, strip.Color(0, 0, 0));   // Turn off all others
+      }
 
-    strip.show();
+      strip.show();
+    }
   }
 }
 
@@ -506,18 +422,16 @@ void hookResponseHandler(const char *event, const char *data)
   // Parse the received data
   memcpy(input_string, data, sizeof(input_string));
 
-  Serial.println("[*] Data received!");
+  Serial.println("[*] Target acquired...");
   //Serial.printf("-> Raw: %s", input_string); 
   //Serial.println("");
 
 	target_lat = atof(strtok(input_string, ","));    // Extract first string from string sequence
-	Serial.printlnf("-> Target lat: %.10g", target_lat);
-
   target_lng = atof(strtok(NULL, ","));            // Extract second string from string sequence
-	Serial.printlnf("-> Target long: %.10g", target_lng);
 
-  Serial.printf("-> Name: %s", strtok(NULL, ",")); // Extract remainder of string sequence
-  Serial.println("");
+  Serial.printlnf("-> Name: %s", strtok(NULL, ",")); // Extract remainder of string sequence
+	Serial.printlnf("-> Target lat: %.10g", target_lat);
+	Serial.printlnf("-> Target long: %.10g", target_lng);
 }        
 
 /* ------------------------ Neopixel ------------------------------ */
