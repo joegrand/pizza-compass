@@ -15,5 +15,9 @@
     "editor.autoClosingQuotes": "never",
     "editor.autoIndent": "none",
     "editor.autoSurround": "never",
-    "particle.disableLocalCompilerDirtyCheck": true
+    "particle.disableLocalCompilerDirtyCheck": true,
+    "typescript.tsdk": "",
+    "git.enabled": false,
+    "git.path": null,
+    "git.autofetch": false
 }
