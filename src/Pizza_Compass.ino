@@ -13,7 +13,7 @@
  * Spinning blue: Waiting for compass calibration (short press to skip, press and hold to calibrate)
  * Solid blue: Compass calibration (spin around each axis like you're painting the inside of a sphere, press button when done)
  * Flashing blue: Compass error (can't communicate)
- * Rainbow/color wheel: Waiting to begin
+ * Rainbow/color wheel: Waiting to begin (press button to start)
  * Solid purple: Sending data request to Particle (local coordinates + search query)
  * Spinning purple: Waiting for response from Particle (target coordinates)
  */
@@ -547,7 +547,7 @@ void Compass_Calibration(bool read_new_values)
     }
 
     delay(100);
-    while (digitalRead(buttonStart) == 0) // Wait until button is released
+    while (digitalRead(buttonStart) == 0); // Wait until button is released
     delay(100); 
 
     // Update global variables with calibrated results
